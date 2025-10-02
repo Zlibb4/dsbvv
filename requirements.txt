@@ -1,6 +1,9 @@
-streamlit==1.32.0
-spacy==3.7.4
-spacy-transformers==4.56.1
+streamlit
+torch
+transformers
+spacy
+# You may also need to ensure the correct torch version is installed
+# If using a CUDA-enabled machine, it would be a specific version like:
+# torch==2.3.0
 https://github.com/explosion/spacy-models/releases/download/en_core_web_trf-3.7.3/en_core_web_trf-3.7.3.tar.gz
 sentencepiece
-torch
