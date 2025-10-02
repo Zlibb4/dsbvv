@@ -1,19 +1,19 @@
 import streamlit as st
 import torch
+from transformers import (
+    GPT2Tokenizer, GPT2LMHeadModel,
+    AutoTokenizer, AutoModelForSequenceClassification
+)
+import spacy
 import time
 import random
-import spacy
-from transformers import (
-    AutoTokenizer, AutoModelForSequenceClassification,
-    AutoModelForCausalLM
-)
 
 # =============================
 # MODEL AND CONFIGURATION SETUP
 # =============================
 
 # Hugging Face model IDs
-SMOLLM_MODEL_ID = "JustToTryModels/sssss"
+GPT2_MODEL_ID = "IamPradeep/AETCSCB_OOD_IC_DistilGPT2_Fine-tuned"
 CLASSIFIER_ID = "IamPradeep/Query_Classifier_DistilBERT"
 
 # Random OOD Fallback Responses
@@ -51,7 +51,47 @@ fallback_responses = [
 ]
 
 # =============================
-# PLACEHOLDER HANDLING
+# MODEL LOADING FUNCTIONS
+# =============================
+
+@st.cache_resource
+def load_spacy_model():
+    nlp = spacy.load("en_core_web_trf")
+    return nlp
+
+@st.cache_resource(show_spinner=False)
+def load_gpt2_model_and_tokenizer():
+    try:
+        model = GPT2LMHeadModel.from_pretrained(GPT2_MODEL_ID, trust_remote_code=True)
+        tokenizer = GPT2Tokenizer.from_pretrained(GPT2_MODEL_ID)
+        return model, tokenizer
+    except Exception as e:
+        st.error(f"Failed to load GPT-2 model from Hugging Face Hub. Error: {e}")
+        return None, None
+
+@st.cache_resource(show_spinner=False)
+def load_classifier_model():
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(CLASSIFIER_ID)
+        model = AutoModelForSequenceClassification.from_pretrained(CLASSIFIER_ID)
+        return model, tokenizer
+    except Exception as e:
+        st.error(f"Failed to load classifier model from Hugging Face Hub. Error: {e}")
+        return None, None
+
+def is_ood(query: str, model, tokenizer):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    model.eval()
+    inputs = tokenizer(query, return_tensors="pt", truncation=True, padding=True, max_length=256)
+    inputs = {k: v.to(device) for k, v in inputs.items()}
+    with torch.no_grad():
+        outputs = model(**inputs)
+    pred_id = torch.argmax(outputs.logits, dim=1).item()
+    return pred_id == 1  # True if OOD (label 1)
+
+# =============================
+# ORIGINAL HELPER FUNCTIONS
 # =============================
 
 static_placeholders = {
@@ -132,14 +172,14 @@ static_placeholders = {
     "{{ASSISTANCE_SECTION}}" : "<b>Assistance Section</b>",
 }
 
-def replace_placeholders(response: str, dynamic_placeholders: dict, static_placeholders: dict) -> str:
+def replace_placeholders(response, dynamic_placeholders, static_placeholders):
     for placeholder, value in static_placeholders.items():
         response = response.replace(placeholder, value)
     for placeholder, value in dynamic_placeholders.items():
         response = response.replace(placeholder, value)
     return response
 
-def extract_dynamic_placeholders(user_question: str, nlp):
+def extract_dynamic_placeholders(user_question, nlp):
     doc = nlp(user_question)
     dynamic_placeholders = {}
     for ent in doc.ents:
@@ -155,82 +195,26 @@ def extract_dynamic_placeholders(user_question: str, nlp):
         dynamic_placeholders['{{CITY}}'] = "city"
     return dynamic_placeholders
 
-# =============================
-# MODEL LOADING FUNCTIONS
-# =============================
-
-@st.cache_resource(show_spinner=False)
-def load_spacy_model():
-    nlp = spacy.load("en_core_web_trf")
-    return nlp
-
-@st.cache_resource(show_spinner=False)
-def load_smol_model_and_tokenizer():
-    try:
-        # Use bfloat16 on CUDA; default dtype on CPU for compatibility
-        if torch.cuda.is_available():
-            model = AutoModelForCausalLM.from_pretrained(SMOLLM_MODEL_ID, torch_dtype=torch.bfloat16)
-        else:
-            model = AutoModelForCausalLM.from_pretrained(SMOLLM_MODEL_ID)
-        tokenizer = AutoTokenizer.from_pretrained(SMOLLM_MODEL_ID)
-        if tokenizer.pad_token_id is None and tokenizer.eos_token_id is not None:
-            tokenizer.pad_token = tokenizer.eos_token
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model.to(device)
-        model.eval()
-        return model, tokenizer, device
-    except Exception as e:
-        st.error(f"Failed to load SmolLM2 model. Error: {e}")
-        return None, None, None
-
-@st.cache_resource(show_spinner=False)
-def load_classifier_model():
-    try:
-        tokenizer = AutoTokenizer.from_pretrained(CLASSIFIER_ID)
-        model = AutoModelForSequenceClassification.from_pretrained(CLASSIFIER_ID)
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model.to(device)
-        model.eval()
-        return model, tokenizer, device
-    except Exception as e:
-        st.error(f"Failed to load classifier model. Error: {e}")
-        return None, None, None
-
-def is_ood(query: str, model, tokenizer, device) -> bool:
-    inputs = tokenizer(query, return_tensors="pt", truncation=True, padding=True, max_length=256)
-    inputs = {k: v.to(device) for k, v in inputs.items()}
-    with torch.no_grad():
-        outputs = model(**inputs)
-    pred_id = torch.argmax(outputs.logits, dim=1).item()
-    return pred_id == 1  # True if OOD (label 1)
-
-def generate_response_smol(model, tokenizer, instruction: str, device, max_new_tokens=256):
+def generate_response(model, tokenizer, instruction, max_length=256):
     model.eval()
-    # Build chat-format input and get only new tokens as output
-    chat_messages = [{"role": "user", "content": instruction}]
-    input_text = tokenizer.apply_chat_template(
-        chat_messages,
-        tokenize=False,
-        add_generation_prompt=True
-    )
-    inputs = tokenizer(input_text, return_tensors="pt").to(device)
-
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    input_text = f"Instruction: {instruction} Response:"
+    inputs = tokenizer(input_text, return_tensors="pt", padding=True).to(device)
     with torch.no_grad():
-        output_ids = model.generate(
+        outputs = model.generate(
             input_ids=inputs["input_ids"],
             attention_mask=inputs["attention_mask"],
-            max_new_tokens=max_new_tokens,
+            max_length=max_length,
+            num_return_sequences=1,
             temperature=0.4,
             top_p=0.95,
             do_sample=True,
-            pad_token_id=tokenizer.eos_token_id,
-            eos_token_id=tokenizer.eos_token_id
+            pad_token_id=tokenizer.eos_token_id
         )
-
-    # Only decode newly generated tokens (beyond prompt length)
-    gen_ids = output_ids[0, inputs["input_ids"].shape[1]:]
-    response_text = tokenizer.decode(gen_ids, skip_special_tokens=True)
-    return response_text.strip()
+    response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    response_start = response.find("Response:") + len("Response:")
+    return response[response_start:].strip()
 
 # =============================
 # CSS AND UI SETUP
@@ -273,15 +257,13 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-st.markdown("<h1 style='font-size: 43px;'>Advanced Event Ticketing Chatbot (SmolLM2)</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='font-size: 43px;'>Advanced Event Ticketing Chatbot</h1>", unsafe_allow_html=True)
 
-# =============================
-# SESSION STATE
-# =============================
+# --- FIX: Initialize state variables for managing generation process ---
 if "models_loaded" not in st.session_state:
     st.session_state.models_loaded = False
 if "generating" not in st.session_state:
-    st.session_state.generating = False
+    st.session_state.generating = False # This will track if a response is being generated
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
@@ -292,57 +274,49 @@ example_queries = [
     "How can I track my ticket cancellation status?", "How can I sell my ticket?"
 ]
 
-# =============================
-# LOAD MODELS
-# =============================
 if not st.session_state.models_loaded:
     with st.spinner("Loading models and resources... Please wait..."):
         try:
             nlp = load_spacy_model()
-            smol_model, smol_tokenizer, smol_device = load_smol_model_and_tokenizer()
-            clf_model, clf_tokenizer, clf_device = load_classifier_model()
+            gpt2_model, gpt2_tokenizer = load_gpt2_model_and_tokenizer()
+            clf_model, clf_tokenizer = load_classifier_model()
 
-            if all([nlp, smol_model, smol_tokenizer, smol_device, clf_model, clf_tokenizer, clf_device]):
+            if all([nlp, gpt2_model, gpt2_tokenizer, clf_model, clf_tokenizer]):
                 st.session_state.models_loaded = True
                 st.session_state.nlp = nlp
-                st.session_state.model = smol_model
-                st.session_state.tokenizer = smol_tokenizer
-                st.session_state.device = smol_device
+                st.session_state.model = gpt2_model
+                st.session_state.tokenizer = gpt2_tokenizer
                 st.session_state.clf_model = clf_model
                 st.session_state.clf_tokenizer = clf_tokenizer
-                st.session_state.clf_device = clf_device
                 st.rerun()
             else:
                 st.error("Failed to load one or more models. Please refresh the page.")
         except Exception as e:
             st.error(f"Error loading models: {str(e)}")
 
-# =============================
+# ==================================
 # MAIN CHAT INTERFACE
-# =============================
+# ==================================
+
 if st.session_state.models_loaded:
     st.write("Ask me about ticket bookings, cancellations, refunds, or any event-related inquiries!")
 
+    # --- FIX: Disable input widgets while generating a response ---
     selected_query = st.selectbox(
-        "Choose a query from examples:",
-        ["Choose your question"] + example_queries,
-        key="query_selectbox",
-        label_visibility="collapsed",
+        "Choose a query from examples:", ["Choose your question"] + example_queries,
+        key="query_selectbox", label_visibility="collapsed",
         disabled=st.session_state.generating
     )
     process_query_button = st.button(
-        "Ask this question",
-        key="query_button",
+        "Ask this question", key="query_button",
         disabled=st.session_state.generating
     )
 
     nlp = st.session_state.nlp
     model = st.session_state.model
     tokenizer = st.session_state.tokenizer
-    device = st.session_state.device
     clf_model = st.session_state.clf_model
     clf_tokenizer = st.session_state.clf_tokenizer
-    clf_device = st.session_state.clf_device
 
     last_role = None
 
@@ -353,30 +327,37 @@ if st.session_state.models_loaded:
             st.markdown(message["content"], unsafe_allow_html=True)
         last_role = message["role"]
 
-    def handle_prompt(prompt_text: str):
+    # --- REFACTORED: Create a unified function to handle prompt processing ---
+    def handle_prompt(prompt_text):
         if not prompt_text or not prompt_text.strip():
             st.toast("⚠️ Please enter or select a question.")
             return
 
+        # --- FIX: Set generating state to True to lock the UI ---
         st.session_state.generating = True
+
         prompt_text = prompt_text[0].upper() + prompt_text[1:]
         st.session_state.chat_history.append({"role": "user", "content": prompt_text, "avatar": "👤"})
+
+        # Rerun to display the user's message and disable inputs immediately
         st.rerun()
 
+
     def process_generation():
+        # This function runs only after the UI is locked and the user message is shown
         last_message = st.session_state.chat_history[-1]["content"]
 
         with st.chat_message("assistant", avatar="🤖"):
             message_placeholder = st.empty()
             full_response = ""
 
-            if is_ood(last_message, clf_model, clf_tokenizer, clf_device):
+            if is_ood(last_message, clf_model, clf_tokenizer):
                 full_response = random.choice(fallback_responses)
             else:
                 with st.spinner("Generating response..."):
                     dynamic_placeholders = extract_dynamic_placeholders(last_message, nlp)
-                    response_text = generate_response_smol(model, tokenizer, last_message, device)
-                    full_response = replace_placeholders(response_text, dynamic_placeholders, static_placeholders)
+                    response_gpt = generate_response(model, tokenizer, last_message)
+                    full_response = replace_placeholders(response_gpt, dynamic_placeholders, static_placeholders)
 
             streamed_text = ""
             for word in full_response.split(" "):
@@ -386,9 +367,12 @@ if st.session_state.models_loaded:
             message_placeholder.markdown(full_response, unsafe_allow_html=True)
 
         st.session_state.chat_history.append({"role": "assistant", "content": full_response, "avatar": "🤖"})
+        # --- FIX: Set generating state to False to unlock UI ---
         st.session_state.generating = False
 
-    # Triggers
+
+    # --- LOGIC FLOW ---
+    # 1. Handle triggers (button click or chat input)
     if process_query_button:
         if selected_query != "Choose your question":
             handle_prompt(selected_query)
@@ -398,12 +382,17 @@ if st.session_state.models_loaded:
     if prompt := st.chat_input("Enter your own question:", disabled=st.session_state.generating):
         handle_prompt(prompt)
 
+    # 2. If UI is locked, it means we need to generate a response
     if st.session_state.generating:
         process_generation()
+        # After generation, rerun to update the UI with the final response and re-enable inputs
         st.rerun()
 
+
+    # The clear button should also be disabled during generation
     if st.session_state.chat_history:
         if st.button("Clear Chat", key="reset_button", disabled=st.session_state.generating):
             st.session_state.chat_history = []
-            st.session_state.generating = False
+            st.session_state.generating = False # Ensure state is reset
+            last_role = None
             st.rerun()
