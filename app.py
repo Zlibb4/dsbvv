@@ -13,7 +13,8 @@ import random
 # =============================
 
 # Hugging Face model IDs
-GPT2_MODEL_ID = "JustToTryModels/sssss"
+# NOTE: Renamed from GPT2_MODEL_ID for clarity. This model is based on SmolLM2.
+CAUSAL_LM_MODEL_ID = "JustToTryModels/sssss"
 CLASSIFIER_ID = "IamPradeep/Query_Classifier_DistilBERT"
 
 # Random OOD Fallback Responses
@@ -60,13 +61,22 @@ def load_spacy_model():
     return nlp
 
 @st.cache_resource(show_spinner=False)
-def load_gpt2_model_and_tokenizer():
+def load_causal_lm_model_and_tokenizer():
     try:
-        model = AutoModelForCausalLM.from_pretrained(GPT2_MODEL_ID, torch_dtype=torch.bfloat16, trust_remote_code=True)
-        tokenizer = AutoTokenizer.from_pretrained(GPT2_MODEL_ID)
+        # FIX: Added trust_remote_code=True to allow loading custom model architectures like SmolLM2.
+        model = AutoModelForCausalLM.from_pretrained(
+            CAUSAL_LM_MODEL_ID,
+            torch_dtype=torch.bfloat16,
+            trust_remote_code=True
+        )
+        tokenizer = AutoTokenizer.from_pretrained(
+            CAUSAL_LM_MODEL_ID,
+            trust_remote_code=True
+        )
         return model, tokenizer
     except Exception as e:
-        st.error(f"Failed to load GPT-2 model from Hugging Face Hub. Error: {e}")
+        # Improved error message to be more specific.
+        st.error(f"Failed to load the Causal LM model from Hugging Face Hub. Error: {e}")
         return None, None
 
 @st.cache_resource(show_spinner=False)
@@ -259,7 +269,7 @@ st.markdown(
 
 st.markdown("<h1 style='font-size: 43px;'>Advanced Event Ticketing Chatbot</h1>", unsafe_allow_html=True)
 
-# --- FIX: Initialize state variables for managing generation process ---
+# --- Initialize state variables for managing generation process ---
 if "models_loaded" not in st.session_state:
     st.session_state.models_loaded = False
 if "generating" not in st.session_state:
@@ -278,14 +288,14 @@ if not st.session_state.models_loaded:
     with st.spinner("Loading models and resources... Please wait..."):
         try:
             nlp = load_spacy_model()
-            gpt2_model, gpt2_tokenizer = load_gpt2_model_and_tokenizer()
+            causal_lm_model, causal_lm_tokenizer = load_causal_lm_model_and_tokenizer()
             clf_model, clf_tokenizer = load_classifier_model()
 
-            if all([nlp, gpt2_model, gpt2_tokenizer, clf_model, clf_tokenizer]):
+            if all([nlp, causal_lm_model, causal_lm_tokenizer, clf_model, clf_tokenizer]):
                 st.session_state.models_loaded = True
                 st.session_state.nlp = nlp
-                st.session_state.model = gpt2_model
-                st.session_state.tokenizer = gpt2_tokenizer
+                st.session_state.model = causal_lm_model
+                st.session_state.tokenizer = causal_lm_tokenizer
                 st.session_state.clf_model = clf_model
                 st.session_state.clf_tokenizer = clf_tokenizer
                 st.rerun()
@@ -301,7 +311,7 @@ if not st.session_state.models_loaded:
 if st.session_state.models_loaded:
     st.write("Ask me about ticket bookings, cancellations, refunds, or any event-related inquiries!")
 
-    # --- FIX: Disable input widgets while generating a response ---
+    # --- Disable input widgets while generating a response ---
     selected_query = st.selectbox(
         "Choose a query from examples:", ["Choose your question"] + example_queries,
         key="query_selectbox", label_visibility="collapsed",
@@ -333,7 +343,7 @@ if st.session_state.models_loaded:
             st.toast("⚠️ Please enter or select a question.")
             return
 
-        # --- FIX: Set generating state to True to lock the UI ---
+        # --- Set generating state to True to lock the UI ---
         st.session_state.generating = True
 
         prompt_text = prompt_text[0].upper() + prompt_text[1:]
@@ -367,7 +377,7 @@ if st.session_state.models_loaded:
             message_placeholder.markdown(full_response, unsafe_allow_html=True)
 
         st.session_state.chat_history.append({"role": "assistant", "content": full_response, "avatar": "🤖"})
-        # --- FIX: Set generating state to False to unlock UI ---
+        # --- Set generating state to False to unlock UI ---
         st.session_state.generating = False
 
 
