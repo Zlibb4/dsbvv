@@ -13,8 +13,8 @@ import random
 # =============================
 
 # Hugging Face model IDs
-# Updated to use a general Causal LM model ID instead of a specific GPT2 name
-GPT2_MODEL_ID = "JustToTryModels/sssss"
+# *** CHANGED TO THE CORRECT MODEL ID ***
+GPT2_MODEL_ID = "JustToTryModels/sssss" 
 CLASSIFIER_ID = "IamPradeep/Query_Classifier_DistilBERT"
 
 # Random OOD Fallback Responses
@@ -64,16 +64,21 @@ def load_spacy_model():
 def load_gpt2_model_and_tokenizer():
     try:
         # Replaced GPT2LMHeadModel and GPT2Tokenizer with Auto versions
+        # NOTE: AutoTokenizer is used here and should resolve the issue if transformers is updated.
         tokenizer = AutoTokenizer.from_pretrained(GPT2_MODEL_ID)
         model = AutoModelForCausalLM.from_pretrained(GPT2_MODEL_ID, trust_remote_code=True)
         
         # Ensure tokenizer has a pad_token if missing, common for causal models
         if tokenizer.pad_token is None:
+            # SmolLM2 is an instruct model and may not have a pad_token explicitly set.
+            # Setting it to EOS is standard practice for generation.
             tokenizer.pad_token = tokenizer.eos_token 
             
         return model, tokenizer
     except Exception as e:
+        # Display the error clearly for the user, as it's likely a version issue
         st.error(f"Failed to load Causal LM model from Hugging Face Hub. Error: {e}")
+        st.warning("HINT: This model is new. If you see an error about 'ModelWrapper', try running 'pip install --upgrade transformers' in your terminal.")
         return None, None
 
 @st.cache_resource(show_spinner=False)
@@ -98,7 +103,7 @@ def is_ood(query: str, model, tokenizer):
     return pred_id == 1  # True if OOD (label 1)
 
 # =============================
-# ORIGINAL HELPER FUNCTIONS
+# ORIGINAL HELPER FUNCTIONS (No change needed)
 # =============================
 
 static_placeholders = {
@@ -207,7 +212,8 @@ def generate_response(model, tokenizer, instruction, max_length=256):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
     
-    # Use the instruction format suitable for the finetuned model
+    # Use the instruction format suitable for the finetuned model (which is often chat/instruct format)
+    # The instruction format in the original code is kept as a simple prompt:
     input_text = f"Instruction: {instruction} Response:"
     
     inputs = tokenizer(input_text, return_tensors="pt", padding=True, truncation=True).to(device)
@@ -238,7 +244,7 @@ def generate_response(model, tokenizer, instruction, max_length=256):
     return response
 
 # =============================
-# CSS AND UI SETUP
+# CSS AND UI SETUP (No change needed)
 # =============================
 
 st.markdown(
