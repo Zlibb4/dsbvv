@@ -1,21 +1,19 @@
 import streamlit as st
 import torch
-from transformers import (
-    AutoTokenizer,
-    AutoModelForSequenceClassification,
-    AutoModelForCausalLM
-)
-import spacy
 import time
 import random
+import spacy
+from transformers import (
+    AutoTokenizer, AutoModelForSequenceClassification,
+    AutoModelForCausalLM
+)
 
 # =============================
 # MODEL AND CONFIGURATION SETUP
 # =============================
 
 # Hugging Face model IDs
-# --- UPDATED: Replaced DistilGPT2 with SmolLM2 ---
-GENERATOR_MODEL_ID = "JustToTryModels/sssss"
+SMOLLM_MODEL_ID = "JustToTryModels/sssss"
 CLASSIFIER_ID = "IamPradeep/Query_Classifier_DistilBERT"
 
 # Random OOD Fallback Responses
@@ -29,64 +27,31 @@ fallback_responses = [
     "I'm sorry, but I cannot assist with this particular topic. If you have questions about event tickets, I’d be glad to help.",
     "I regret that I’m unable to provide assistance here. Please let me know how I can support you with event ticket matters.",
     "Unfortunately, I am not equipped to assist with this. If you need help with event tickets, I am here for that.",
-    "I apologize, but I cannot help with this request. However, I’d be happy to assist with anything related to event tickets."
+    "I apologize, but I cannot help with this request. However, I’d be happy to assist with anything related to event tickets.",
+    "I’m sorry, but I’m unable to support this request. If it’s about event tickets, I’ll gladly help however I can.",
+    "This matter falls outside the assistance I can offer. Please let me know if you need help with event ticket-related inquiries.",
+    "Regrettably, this is not something I can assist with. I’m happy to help with any event ticket questions you may have.",
+    "I’m unable to provide support for this issue. However, I can assist with concerns regarding event tickets.",
+    "I apologize, but I cannot help with this matter. If your inquiry is related to event tickets, I’d be more than happy to assist.",
+    "I regret that I am unable to offer help in this case. I am, however, available for any event ticket-related questions.",
+    "Unfortunately, I’m not able to assist with this. Please let me know if there’s anything I can do regarding event tickets.",
+    "I'm sorry, but I cannot assist with this topic. However, I’m here to help with any event ticket concerns you may have.",
+    "Apologies, but this request falls outside of my support scope. If you need help with event tickets, I’m happy to assist.",
+    "I’m afraid I can’t help with this matter. If there’s anything related to event tickets you need, feel free to reach out.",
+    "This is beyond what I can assist with at the moment. Let me know if there’s anything I can do to help with event tickets.",
+    "Sorry, I’m unable to provide support on this issue. However, I’d be glad to assist with event ticket-related topics.",
+    "Apologies, but I can’t assist with this. Please let me know if you have any event ticket inquiries I can help with.",
+    "I’m unable to help with this matter. However, if you need assistance with event tickets, I’m here for you.",
+    "Unfortunately, I can’t support this request. I’d be happy to assist with anything related to event tickets instead.",
+    "I’m sorry, but I can’t help with this. If your concern is related to event tickets, I’ll do my best to assist.",
+    "Apologies, but this issue is outside of my capabilities. However, I’m available to help with event ticket-related requests.",
+    "I regret that I cannot assist with this particular matter. Please let me know how I can support you regarding event tickets.",
+    "I’m sorry, but I’m not able to help in this instance. I am, however, ready to assist with any questions about event tickets.",
+    "Unfortunately, I’m unable to help with this topic. Let me know if there's anything event ticket-related I can support you with."
 ]
 
 # =============================
-# MODEL LOADING FUNCTIONS
-# =============================
-
-@st.cache_resource
-def load_spacy_model():
-    """Loads the spaCy model for Named Entity Recognition."""
-    try:
-        return spacy.load("en_core_web_trf")
-    except Exception as e:
-        st.error(f"Failed to load spaCy model. Error: {e}")
-        return None
-
-@st.cache_resource(show_spinner="Loading chatbot model...")
-def load_generator_model_and_tokenizer():
-    """Loads the fine-tuned SmolLM2 model and its tokenizer."""
-    try:
-        # Using device_map="auto" is great for cloud deployment as it handles resource allocation.
-        # torch_dtype=torch.bfloat16 provides better performance on compatible hardware.
-        model = AutoModelForCausalLM.from_pretrained(
-            GENERATOR_MODEL_ID,
-            torch_dtype=torch.bfloat16,
-            trust_remote_code=True
-        )
-        tokenizer = AutoTokenizer.from_pretrained(GENERATOR_MODEL_ID)
-        return model, tokenizer
-    except Exception as e:
-        st.error(f"Failed to load Generator model from Hugging Face Hub. Error: {e}")
-        return None, None
-
-@st.cache_resource(show_spinner="Loading classifier model...")
-def load_classifier_model_and_tokenizer():
-    """Loads the out-of-domain classification model and its tokenizer."""
-    try:
-        tokenizer = AutoTokenizer.from_pretrained(CLASSIFIER_ID)
-        model = AutoModelForSequenceClassification.from_pretrained(CLASSIFIER_ID)
-        return model, tokenizer
-    except Exception as e:
-        st.error(f"Failed to load Classifier model from Hugging Face Hub. Error: {e}")
-        return None, None
-
-def is_ood(query: str, model, tokenizer):
-    """Checks if a query is Out-of-Domain using the classifier."""
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.to(device)
-    model.eval()
-    inputs = tokenizer(query, return_tensors="pt", truncation=True, padding=True, max_length=256)
-    inputs = {k: v.to(device) for k, v in inputs.items()}
-    with torch.no_grad():
-        outputs = model(**inputs)
-    pred_id = torch.argmax(outputs.logits, dim=1).item()
-    return pred_id == 1  # True if OOD (label 1)
-
-# =============================
-# PLACEHOLDER & RESPONSE GENERATION
+# PLACEHOLDER HANDLING
 # =============================
 
 static_placeholders = {
@@ -167,14 +132,14 @@ static_placeholders = {
     "{{ASSISTANCE_SECTION}}" : "<b>Assistance Section</b>",
 }
 
-def replace_placeholders(response, dynamic_placeholders, static_placeholders):
+def replace_placeholders(response: str, dynamic_placeholders: dict, static_placeholders: dict) -> str:
     for placeholder, value in static_placeholders.items():
         response = response.replace(placeholder, value)
     for placeholder, value in dynamic_placeholders.items():
         response = response.replace(placeholder, value)
     return response
 
-def extract_dynamic_placeholders(user_question, nlp):
+def extract_dynamic_placeholders(user_question: str, nlp):
     doc = nlp(user_question)
     dynamic_placeholders = {}
     for ent in doc.ents:
@@ -185,48 +150,91 @@ def extract_dynamic_placeholders(user_question, nlp):
             city_text = ent.text.title()
             dynamic_placeholders['{{CITY}}'] = f"<b>{city_text}</b>"
     if '{{EVENT}}' not in dynamic_placeholders:
-        dynamic_placeholders['{{EVENT}}'] = "the event"
+        dynamic_placeholders['{{EVENT}}'] = "event"
     if '{{CITY}}' not in dynamic_placeholders:
-        dynamic_placeholders['{{CITY}}'] = "your city"
+        dynamic_placeholders['{{CITY}}'] = "city"
     return dynamic_placeholders
 
-# --- UPDATED: New generate_response function for SmolLM2 chat template ---
-def generate_response(model, tokenizer, instruction, max_length=256):
+# =============================
+# MODEL LOADING FUNCTIONS
+# =============================
+
+@st.cache_resource(show_spinner=False)
+def load_spacy_model():
+    nlp = spacy.load("en_core_web_trf")
+    return nlp
+
+@st.cache_resource(show_spinner=False)
+def load_smol_model_and_tokenizer():
+    try:
+        # Use bfloat16 on CUDA; default dtype on CPU for compatibility
+        if torch.cuda.is_available():
+            model = AutoModelForCausalLM.from_pretrained(SMOLLM_MODEL_ID, torch_dtype=torch.bfloat16)
+        else:
+            model = AutoModelForCausalLM.from_pretrained(SMOLLM_MODEL_ID)
+        tokenizer = AutoTokenizer.from_pretrained(SMOLLM_MODEL_ID)
+        if tokenizer.pad_token_id is None and tokenizer.eos_token_id is not None:
+            tokenizer.pad_token = tokenizer.eos_token
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model.to(device)
+        model.eval()
+        return model, tokenizer, device
+    except Exception as e:
+        st.error(f"Failed to load SmolLM2 model. Error: {e}")
+        return None, None, None
+
+@st.cache_resource(show_spinner=False)
+def load_classifier_model():
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(CLASSIFIER_ID)
+        model = AutoModelForSequenceClassification.from_pretrained(CLASSIFIER_ID)
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model.to(device)
+        model.eval()
+        return model, tokenizer, device
+    except Exception as e:
+        st.error(f"Failed to load classifier model. Error: {e}")
+        return None, None, None
+
+def is_ood(query: str, model, tokenizer, device) -> bool:
+    inputs = tokenizer(query, return_tensors="pt", truncation=True, padding=True, max_length=256)
+    inputs = {k: v.to(device) for k, v in inputs.items()}
+    with torch.no_grad():
+        outputs = model(**inputs)
+    pred_id = torch.argmax(outputs.logits, dim=1).item()
+    return pred_id == 1  # True if OOD (label 1)
+
+def generate_response_smol(model, tokenizer, instruction: str, device, max_new_tokens=256):
     model.eval()
-    
-    # Format the input using the model's specific chat template
-    chat_format = [{"role": "user", "content": instruction}]
-    input_text = tokenizer.apply_chat_template(chat_format, tokenize=False, add_generation_prompt=True)
-    
-    # The model's device is managed by device_map="auto" during loading
-    inputs = tokenizer(input_text, return_tensors="pt").to(model.device)
+    # Build chat-format input and get only new tokens as output
+    chat_messages = [{"role": "user", "content": instruction}]
+    input_text = tokenizer.apply_chat_template(
+        chat_messages,
+        tokenize=False,
+        add_generation_prompt=True
+    )
+    inputs = tokenizer(input_text, return_tensors="pt").to(device)
 
     with torch.no_grad():
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=max_length, # Use max_new_tokens to control output length
-            num_return_sequences=1,
+        output_ids = model.generate(
+            input_ids=inputs["input_ids"],
+            attention_mask=inputs["attention_mask"],
+            max_new_tokens=max_new_tokens,
             temperature=0.4,
             top_p=0.95,
             do_sample=True,
-            pad_token_id=tokenizer.eos_token_id
+            pad_token_id=tokenizer.eos_token_id,
+            eos_token_id=tokenizer.eos_token_id
         )
-    
-    # Decode and remove the input prompt from the generated text
-    response = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    # The response contains the prompt, so we remove it
-    prompt_response_split = response.split('[/INST]')
-    if len(prompt_response_split) > 1:
-        return prompt_response_split[1].strip()
-    else: # Fallback in case the template format isn't exactly as expected
-        return response[len(tokenizer.decode(inputs['input_ids'][0], skip_special_tokens=True)):].strip()
 
+    # Only decode newly generated tokens (beyond prompt length)
+    gen_ids = output_ids[0, inputs["input_ids"].shape[1]:]
+    response_text = tokenizer.decode(gen_ids, skip_special_tokens=True)
+    return response_text.strip()
 
 # =============================
 # CSS AND UI SETUP
 # =============================
-
-st.set_page_config(page_title="Event Ticketing Chatbot", page_icon="🎫")
 
 st.markdown(
     """
@@ -238,7 +246,19 @@ st.markdown(
 div[data-testid="stHorizontalBlock"] div[data-testid="stButton"] button:nth-of-type(1) { background: linear-gradient(90deg, #29ABE2, #0077B6); color: white !important; }
 .horizontal-line { border-top: 2px solid #e0e0e0; margin: 15px 0; }
 div[data-testid="stChatInput"] { box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2); border-radius: 5px; padding: 10px; margin: 10px 0; }
-.footer { position: fixed; left: 0; bottom: 0; width: 100%; background: var(--streamlit-background-color); color: gray; text-align: center; padding: 5px 0; font-size: 13px; z-index: 9999; }
+
+.footer {
+    position: fixed;
+    left: 0;
+    bottom: 0;
+    width: 100%;
+    background: var(--streamlit-background-color);
+    color: gray;
+    text-align: center;
+    padding: 5px 0;
+    font-size: 13px;
+    z-index: 9999;
+}
 .main { padding-bottom: 40px; }
 </style>
     """, unsafe_allow_html=True
@@ -253,9 +273,11 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-st.markdown("<h1 style='font-size: 43px;'>Advanced Event Ticketing Chatbot</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='font-size: 43px;'>Advanced Event Ticketing Chatbot (SmolLM2)</h1>", unsafe_allow_html=True)
 
-# Initialize state variables for managing generation process
+# =============================
+# SESSION STATE
+# =============================
 if "models_loaded" not in st.session_state:
     st.session_state.models_loaded = False
 if "generating" not in st.session_state:
@@ -270,52 +292,60 @@ example_queries = [
     "How can I track my ticket cancellation status?", "How can I sell my ticket?"
 ]
 
-# Load all models on first run
+# =============================
+# LOAD MODELS
+# =============================
 if not st.session_state.models_loaded:
-    with st.spinner("Initializing models... This may take a moment."):
-        nlp = load_spacy_model()
-        gen_model, gen_tokenizer = load_generator_model_and_tokenizer()
-        clf_model, clf_tokenizer = load_classifier_model_and_tokenizer()
+    with st.spinner("Loading models and resources... Please wait..."):
+        try:
+            nlp = load_spacy_model()
+            smol_model, smol_tokenizer, smol_device = load_smol_model_and_tokenizer()
+            clf_model, clf_tokenizer, clf_device = load_classifier_model()
 
-        if all([nlp, gen_model, gen_tokenizer, clf_model, clf_tokenizer]):
-            st.session_state.models_loaded = True
-            st.session_state.nlp = nlp
-            st.session_state.model = gen_model
-            st.session_state.tokenizer = gen_tokenizer
-            st.session_state.clf_model = clf_model
-            st.session_state.clf_tokenizer = clf_tokenizer
-            st.rerun()
-        else:
-            st.error("A critical model failed to load. The application cannot start. Please refresh.")
+            if all([nlp, smol_model, smol_tokenizer, smol_device, clf_model, clf_tokenizer, clf_device]):
+                st.session_state.models_loaded = True
+                st.session_state.nlp = nlp
+                st.session_state.model = smol_model
+                st.session_state.tokenizer = smol_tokenizer
+                st.session_state.device = smol_device
+                st.session_state.clf_model = clf_model
+                st.session_state.clf_tokenizer = clf_tokenizer
+                st.session_state.clf_device = clf_device
+                st.rerun()
+            else:
+                st.error("Failed to load one or more models. Please refresh the page.")
+        except Exception as e:
+            st.error(f"Error loading models: {str(e)}")
 
-# ==================================
+# =============================
 # MAIN CHAT INTERFACE
-# ==================================
-
+# =============================
 if st.session_state.models_loaded:
     st.write("Ask me about ticket bookings, cancellations, refunds, or any event-related inquiries!")
 
-    # Disable input widgets while generating a response
-    is_generating = st.session_state.generating
     selected_query = st.selectbox(
-        "Choose an example query:", [""] + example_queries,
-        key="query_selectbox", label_visibility="collapsed",
-        disabled=is_generating, index=0
+        "Choose a query from examples:",
+        ["Choose your question"] + example_queries,
+        key="query_selectbox",
+        label_visibility="collapsed",
+        disabled=st.session_state.generating
     )
     process_query_button = st.button(
-        "Ask this question", key="query_button",
-        disabled=is_generating
+        "Ask this question",
+        key="query_button",
+        disabled=st.session_state.generating
     )
 
-    # Retrieve models from session state
     nlp = st.session_state.nlp
     model = st.session_state.model
     tokenizer = st.session_state.tokenizer
+    device = st.session_state.device
     clf_model = st.session_state.clf_model
     clf_tokenizer = st.session_state.clf_tokenizer
+    clf_device = st.session_state.clf_device
 
-    # Display chat history
     last_role = None
+
     for message in st.session_state.chat_history:
         if message["role"] == "user" and last_role == "assistant":
             st.markdown("<div class='horizontal-line'></div>", unsafe_allow_html=True)
@@ -323,10 +353,9 @@ if st.session_state.models_loaded:
             st.markdown(message["content"], unsafe_allow_html=True)
         last_role = message["role"]
 
-    # Unified function to handle prompt processing
-    def handle_prompt(prompt_text):
+    def handle_prompt(prompt_text: str):
         if not prompt_text or not prompt_text.strip():
-            st.toast("⚠️ Please enter or select a question.", icon="⚠️")
+            st.toast("⚠️ Please enter or select a question.")
             return
 
         st.session_state.generating = True
@@ -334,7 +363,6 @@ if st.session_state.models_loaded:
         st.session_state.chat_history.append({"role": "user", "content": prompt_text, "avatar": "👤"})
         st.rerun()
 
-    # Function to run the generation logic after UI has been updated
     def process_generation():
         last_message = st.session_state.chat_history[-1]["content"]
 
@@ -342,41 +370,40 @@ if st.session_state.models_loaded:
             message_placeholder = st.empty()
             full_response = ""
 
-            if is_ood(last_message, clf_model, clf_tokenizer):
+            if is_ood(last_message, clf_model, clf_tokenizer, clf_device):
                 full_response = random.choice(fallback_responses)
             else:
-                with st.spinner("Thinking..."):
+                with st.spinner("Generating response..."):
                     dynamic_placeholders = extract_dynamic_placeholders(last_message, nlp)
-                    raw_response = generate_response(model, tokenizer, last_message)
-                    full_response = replace_placeholders(raw_response, dynamic_placeholders, static_placeholders)
+                    response_text = generate_response_smol(model, tokenizer, last_message, device)
+                    full_response = replace_placeholders(response_text, dynamic_placeholders, static_placeholders)
 
-            # Simulate streaming for better user experience
             streamed_text = ""
             for word in full_response.split(" "):
                 streamed_text += word + " "
-                message_placeholder.markdown(streamed_text + "▌", unsafe_allow_html=True)
+                message_placeholder.markdown(streamed_text + "⬤", unsafe_allow_html=True)
                 time.sleep(0.05)
             message_placeholder.markdown(full_response, unsafe_allow_html=True)
 
         st.session_state.chat_history.append({"role": "assistant", "content": full_response, "avatar": "🤖"})
         st.session_state.generating = False
 
-    # --- Main Logic Flow ---
-    # 1. Handle user input triggers
-    if process_query_button and selected_query:
-        handle_prompt(selected_query)
+    # Triggers
+    if process_query_button:
+        if selected_query != "Choose your question":
+            handle_prompt(selected_query)
+        else:
+            st.error("⚠️ Please select your question from the dropdown.")
 
-    if prompt := st.chat_input("Enter your own question:", disabled=is_generating):
+    if prompt := st.chat_input("Enter your own question:", disabled=st.session_state.generating):
         handle_prompt(prompt)
 
-    # 2. If UI is locked for generation, run the model
     if st.session_state.generating:
         process_generation()
         st.rerun()
 
-    # Clear chat button
     if st.session_state.chat_history:
-        if st.button("Clear Chat", key="reset_button", disabled=is_generating):
+        if st.button("Clear Chat", key="reset_button", disabled=st.session_state.generating):
             st.session_state.chat_history = []
             st.session_state.generating = False
             st.rerun()
