@@ -1,8 +1,8 @@
+# code-1
 import streamlit as st
 import torch
 from transformers import (
-    GPT2Tokenizer, GPT2LMHeadModel,
-    AutoTokenizer, AutoModelForSequenceClassification
+    AutoTokenizer, AutoModelForSequenceClassification, AutoModelForCausalLM
 )
 import spacy
 import time
@@ -13,7 +13,8 @@ import random
 # =============================
 
 # Hugging Face model IDs
-GPT2_MODEL_ID = "IamPradeep/AETCSCB_OOD_IC_DistilGPT2_Fine-tuned"
+# Updated to use a general Causal LM model ID instead of a specific GPT2 name
+GPT2_MODEL_ID = "JustToTryModels/sssss"
 CLASSIFIER_ID = "IamPradeep/Query_Classifier_DistilBERT"
 
 # Random OOD Fallback Responses
@@ -62,11 +63,17 @@ def load_spacy_model():
 @st.cache_resource(show_spinner=False)
 def load_gpt2_model_and_tokenizer():
     try:
-        model = GPT2LMHeadModel.from_pretrained(GPT2_MODEL_ID, trust_remote_code=True)
-        tokenizer = GPT2Tokenizer.from_pretrained(GPT2_MODEL_ID)
+        # Replaced GPT2LMHeadModel and GPT2Tokenizer with Auto versions
+        tokenizer = AutoTokenizer.from_pretrained(GPT2_MODEL_ID)
+        model = AutoModelForCausalLM.from_pretrained(GPT2_MODEL_ID, trust_remote_code=True)
+        
+        # Ensure tokenizer has a pad_token if missing, common for causal models
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token 
+            
         return model, tokenizer
     except Exception as e:
-        st.error(f"Failed to load GPT-2 model from Hugging Face Hub. Error: {e}")
+        st.error(f"Failed to load Causal LM model from Hugging Face Hub. Error: {e}")
         return None, None
 
 @st.cache_resource(show_spinner=False)
@@ -199,8 +206,15 @@ def generate_response(model, tokenizer, instruction, max_length=256):
     model.eval()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
+    
+    # Use the instruction format suitable for the finetuned model
     input_text = f"Instruction: {instruction} Response:"
-    inputs = tokenizer(input_text, return_tensors="pt", padding=True).to(device)
+    
+    inputs = tokenizer(input_text, return_tensors="pt", padding=True, truncation=True).to(device)
+    
+    # Ensure pad_token_id is set for generation
+    pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
+    
     with torch.no_grad():
         outputs = model.generate(
             input_ids=inputs["input_ids"],
@@ -210,11 +224,18 @@ def generate_response(model, tokenizer, instruction, max_length=256):
             temperature=0.4,
             top_p=0.95,
             do_sample=True,
-            pad_token_id=tokenizer.eos_token_id
+            pad_token_id=pad_token_id 
         )
+    
     response = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    response_start = response.find("Response:") + len("Response:")
-    return response[response_start:].strip()
+    
+    # Clean up the output based on the prompt format
+    response_start_index = response.lower().find("response:")
+    if response_start_index != -1:
+        response_start = response_start_index + len("response:")
+        response = response[response_start:].strip()
+    
+    return response
 
 # =============================
 # CSS AND UI SETUP
@@ -278,7 +299,9 @@ if not st.session_state.models_loaded:
     with st.spinner("Loading models and resources... Please wait..."):
         try:
             nlp = load_spacy_model()
-            gpt2_model, gpt2_tokenizer = load_gpt2_model_and_tokenizer()
+            # Renamed variables to reflect the change, but kept original variable names 
+            # (gpt2_model, gpt2_tokenizer) as per instruction for consistency in the main logic block
+            gpt2_model, gpt2_tokenizer = load_gpt2_model_and_tokenizer() 
             clf_model, clf_tokenizer = load_classifier_model()
 
             if all([nlp, gpt2_model, gpt2_tokenizer, clf_model, clf_tokenizer]):
@@ -312,6 +335,7 @@ if st.session_state.models_loaded:
         disabled=st.session_state.generating
     )
 
+    # Use the session state variables (which hold the AutoModel/AutoTokenizer now)
     nlp = st.session_state.nlp
     model = st.session_state.model
     tokenizer = st.session_state.tokenizer
