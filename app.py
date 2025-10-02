@@ -11,7 +11,7 @@ import random
 
 with st.expander("📦 Library Versions Used in This App"):
     st.markdown(f"""
-    - **Streamlit**: `{streamlit.__version__}`
+    - **Streamlit**: `{st.__version__}`
     - **Transformers**: `{transformers.__version__}`
     - **Torch (PyTorch)**: `{torch.__version__}`
     - **spaCy**: `{spacy.__version__}`
