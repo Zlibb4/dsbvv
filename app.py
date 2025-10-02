@@ -1,8 +1,10 @@
+# Code-1 (DistilGPT2 Streamlit Deployment):
 import streamlit as st
 import torch
 from transformers import (
-    GPT2Tokenizer, GPT2LMHeadModel,
-    AutoTokenizer, AutoModelForSequenceClassification
+    AutoTokenizer, 
+    AutoModelForCausalLM,
+    AutoModelForSequenceClassification
 )
 import spacy
 import time
@@ -12,11 +14,11 @@ import random
 # MODEL AND CONFIGURATION SETUP
 # =============================
 
-# Hugging Face model IDs
-GPT2_MODEL_ID = "IamPradeep/AETCSCB_OOD_IC_DistilGPT2_Fine-tuned"
+# --- MODIFIED: Updated model ID to use the fine-tuned SmolLM2 ---
+GENERATOR_MODEL_ID = "JustToTryModels/sssss" 
 CLASSIFIER_ID = "IamPradeep/Query_Classifier_DistilBERT"
 
-# Random OOD Fallback Responses
+# Random OOD Fallback Responses (Unchanged)
 fallback_responses = [
     "I’m sorry, but I am unable to assist with this request. If you need help regarding event tickets, I’d be happy to support you.",
     "Apologies, but I am not able to provide assistance on this matter. Please let me know if you require help with event tickets.",
@@ -59,16 +61,23 @@ def load_spacy_model():
     nlp = spacy.load("en_core_web_trf")
     return nlp
 
+# --- MODIFIED: Function updated to load the SmolLM2 model ---
 @st.cache_resource(show_spinner=False)
-def load_gpt2_model_and_tokenizer():
+def load_generator_model_and_tokenizer():
     try:
-        model = GPT2LMHeadModel.from_pretrained(GPT2_MODEL_ID, trust_remote_code=True)
-        tokenizer = GPT2Tokenizer.from_pretrained(GPT2_MODEL_ID)
+        # Using AutoModelForCausalLM as it's more general and works for SmolLM2
+        model = AutoModelForCausalLM.from_pretrained(
+            GENERATOR_MODEL_ID,
+            torch_dtype=torch.bfloat16, # Use bfloat16 for efficiency
+            device_map="auto" # Automatically select device (CPU on Streamlit Cloud)
+        )
+        tokenizer = AutoTokenizer.from_pretrained(GENERATOR_MODEL_ID)
         return model, tokenizer
     except Exception as e:
-        st.error(f"Failed to load GPT-2 model from Hugging Face Hub. Error: {e}")
+        st.error(f"Failed to load Generator model from Hugging Face Hub. Error: {e}")
         return None, None
 
+# --- Unchanged: Classifier loading function is the same ---
 @st.cache_resource(show_spinner=False)
 def load_classifier_model():
     try:
@@ -195,29 +204,39 @@ def extract_dynamic_placeholders(user_question, nlp):
         dynamic_placeholders['{{CITY}}'] = "city"
     return dynamic_placeholders
 
+# --- MODIFIED: Response generation adapted for SmolLM2's chat template ---
 def generate_response(model, tokenizer, instruction, max_length=256):
     model.eval()
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.to(device)
-    input_text = f"Instruction: {instruction} Response:"
+    device = model.device # Get device from the model itself (set by device_map)
+
+    # Use the chat template required by the SmolLM2 model
+    chat_format = [{"role": "user", "content": instruction}]
+    input_text = tokenizer.apply_chat_template(chat_format, tokenize=False, add_generation_prompt=True)
+    
     inputs = tokenizer(input_text, return_tensors="pt", padding=True).to(device)
+    input_ids = inputs["input_ids"]
+
     with torch.no_grad():
         outputs = model.generate(
-            input_ids=inputs["input_ids"],
+            input_ids=input_ids,
             attention_mask=inputs["attention_mask"],
-            max_length=max_length,
+            max_new_tokens=max_length, # Use max_new_tokens for better control
             num_return_sequences=1,
             temperature=0.4,
             top_p=0.95,
             do_sample=True,
             pad_token_id=tokenizer.eos_token_id
         )
-    response = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    response_start = response.find("Response:") + len("Response:")
-    return response[response_start:].strip()
+
+    # Decode only the newly generated tokens, not the prompt
+    response_ids = outputs[0, input_ids.shape[-1]:]
+    response = tokenizer.decode(response_ids, skip_special_tokens=True)
+    
+    return response.strip()
+
 
 # =============================
-# CSS AND UI SETUP
+# CSS AND UI SETUP (Unchanged)
 # =============================
 
 st.markdown(
@@ -259,11 +278,11 @@ st.markdown(
 
 st.markdown("<h1 style='font-size: 43px;'>Advanced Event Ticketing Chatbot</h1>", unsafe_allow_html=True)
 
-# --- FIX: Initialize state variables for managing generation process ---
+# Initialize state variables for managing generation process
 if "models_loaded" not in st.session_state:
     st.session_state.models_loaded = False
 if "generating" not in st.session_state:
-    st.session_state.generating = False # This will track if a response is being generated
+    st.session_state.generating = False
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
@@ -278,14 +297,15 @@ if not st.session_state.models_loaded:
     with st.spinner("Loading models and resources... Please wait..."):
         try:
             nlp = load_spacy_model()
-            gpt2_model, gpt2_tokenizer = load_gpt2_model_and_tokenizer()
+            # --- MODIFIED: Call the updated loading function ---
+            generator_model, generator_tokenizer = load_generator_model_and_tokenizer()
             clf_model, clf_tokenizer = load_classifier_model()
 
-            if all([nlp, gpt2_model, gpt2_tokenizer, clf_model, clf_tokenizer]):
+            if all([nlp, generator_model, generator_tokenizer, clf_model, clf_tokenizer]):
                 st.session_state.models_loaded = True
                 st.session_state.nlp = nlp
-                st.session_state.model = gpt2_model
-                st.session_state.tokenizer = gpt2_tokenizer
+                st.session_state.model = generator_model
+                st.session_state.tokenizer = generator_tokenizer
                 st.session_state.clf_model = clf_model
                 st.session_state.clf_tokenizer = clf_tokenizer
                 st.rerun()
@@ -295,13 +315,13 @@ if not st.session_state.models_loaded:
             st.error(f"Error loading models: {str(e)}")
 
 # ==================================
-# MAIN CHAT INTERFACE
+# MAIN CHAT INTERFACE (Unchanged Logic)
 # ==================================
 
 if st.session_state.models_loaded:
     st.write("Ask me about ticket bookings, cancellations, refunds, or any event-related inquiries!")
 
-    # --- FIX: Disable input widgets while generating a response ---
+    # Disable input widgets while generating a response
     selected_query = st.selectbox(
         "Choose a query from examples:", ["Choose your question"] + example_queries,
         key="query_selectbox", label_visibility="collapsed",
@@ -327,13 +347,13 @@ if st.session_state.models_loaded:
             st.markdown(message["content"], unsafe_allow_html=True)
         last_role = message["role"]
 
-    # --- REFACTORED: Create a unified function to handle prompt processing ---
+    # Create a unified function to handle prompt processing
     def handle_prompt(prompt_text):
         if not prompt_text or not prompt_text.strip():
             st.toast("⚠️ Please enter or select a question.")
             return
 
-        # --- FIX: Set generating state to True to lock the UI ---
+        # Set generating state to True to lock the UI
         st.session_state.generating = True
 
         prompt_text = prompt_text[0].upper() + prompt_text[1:]
@@ -356,8 +376,9 @@ if st.session_state.models_loaded:
             else:
                 with st.spinner("Generating response..."):
                     dynamic_placeholders = extract_dynamic_placeholders(last_message, nlp)
-                    response_gpt = generate_response(model, tokenizer, last_message)
-                    full_response = replace_placeholders(response_gpt, dynamic_placeholders, static_placeholders)
+                    # The function call is the same, but the underlying implementation is new
+                    response_raw = generate_response(model, tokenizer, last_message)
+                    full_response = replace_placeholders(response_raw, dynamic_placeholders, static_placeholders)
 
             streamed_text = ""
             for word in full_response.split(" "):
@@ -367,11 +388,11 @@ if st.session_state.models_loaded:
             message_placeholder.markdown(full_response, unsafe_allow_html=True)
 
         st.session_state.chat_history.append({"role": "assistant", "content": full_response, "avatar": "🤖"})
-        # --- FIX: Set generating state to False to unlock UI ---
+        # Set generating state to False to unlock UI
         st.session_state.generating = False
 
 
-    # --- LOGIC FLOW ---
+    # LOGIC FLOW
     # 1. Handle triggers (button click or chat input)
     if process_query_button:
         if selected_query != "Choose your question":
