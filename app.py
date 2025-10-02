@@ -63,24 +63,82 @@ def load_spacy_model():
 
 @st.cache_resource(show_spinner=False)
 def load_smollm_model_and_tokenizer():
-    """Load SmolLM2 model and tokenizer"""
+    """Load SmolLM2 model and tokenizer with multiple fallback strategies"""
     try:
+        # Strategy 1: Try with minimal parameters (most compatible)
+        st.info("Loading SmolLM2 model... (Method 1)")
+        tokenizer = AutoTokenizer.from_pretrained(
+            SMOLLM_MODEL_ID,
+            trust_remote_code=True
+        )
+        
         model = AutoModelForCausalLM.from_pretrained(
-            SMOLLM_MODEL_ID, 
-            torch_dtype=torch.bfloat16,
+            SMOLLM_MODEL_ID,
             trust_remote_code=True,
             low_cpu_mem_usage=True
         )
-        tokenizer = AutoTokenizer.from_pretrained(SMOLLM_MODEL_ID)
         
         # Set pad token if not already set
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
-            
+        
+        st.success("✅ Model loaded successfully!")
         return model, tokenizer
-    except Exception as e:
-        st.error(f"Failed to load SmolLM2 model from Hugging Face Hub. Error: {e}")
-        return None, None
+        
+    except Exception as e1:
+        st.warning(f"Method 1 failed: {str(e1)[:100]}...")
+        
+        try:
+            # Strategy 2: Try with explicit torch_dtype=float32
+            st.info("Trying alternative loading method... (Method 2)")
+            tokenizer = AutoTokenizer.from_pretrained(
+                SMOLLM_MODEL_ID,
+                trust_remote_code=True
+            )
+            
+            model = AutoModelForCausalLM.from_pretrained(
+                SMOLLM_MODEL_ID,
+                trust_remote_code=True,
+                torch_dtype=torch.float32,
+                low_cpu_mem_usage=True
+            )
+            
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token
+            
+            st.success("✅ Model loaded successfully!")
+            return model, tokenizer
+            
+        except Exception as e2:
+            st.warning(f"Method 2 failed: {str(e2)[:100]}...")
+            
+            try:
+                # Strategy 3: Try without low_cpu_mem_usage
+                st.info("Trying alternative loading method... (Method 3)")
+                tokenizer = AutoTokenizer.from_pretrained(
+                    SMOLLM_MODEL_ID,
+                    trust_remote_code=True
+                )
+                
+                model = AutoModelForCausalLM.from_pretrained(
+                    SMOLLM_MODEL_ID,
+                    trust_remote_code=True
+                )
+                
+                if tokenizer.pad_token is None:
+                    tokenizer.pad_token = tokenizer.eos_token
+                
+                st.success("✅ Model loaded successfully!")
+                return model, tokenizer
+                
+            except Exception as e3:
+                st.error(f"Failed to load SmolLM2 model. All methods failed.")
+                st.error(f"Error details: {str(e3)}")
+                st.info("**Troubleshooting tips:**")
+                st.info("1. Check if the model 'JustToTryModels/sssss' exists on Hugging Face")
+                st.info("2. Verify you have access to the model (it might be private)")
+                st.info("3. Try upgrading transformers: `pip install --upgrade transformers`")
+                return None, None
 
 @st.cache_resource(show_spinner=False)
 def load_classifier_model():
@@ -223,15 +281,20 @@ def extract_dynamic_placeholders(user_question, nlp):
 def generate_response(model, tokenizer, instruction, max_length=256):
     """Generate response using SmolLM2 with chat template format"""
     model.eval()
-    device = next(model.parameters()).device
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
     
-    # Format input using chat template
-    chat_format = [{"role": "user", "content": instruction}]
-    input_text = tokenizer.apply_chat_template(
-        chat_format, 
-        tokenize=False, 
-        add_generation_prompt=True
-    )
+    try:
+        # Try using chat template
+        chat_format = [{"role": "user", "content": instruction}]
+        input_text = tokenizer.apply_chat_template(
+            chat_format, 
+            tokenize=False, 
+            add_generation_prompt=True
+        )
+    except Exception as e:
+        # Fallback to simple instruction format
+        input_text = f"<|im_start|>user\n{instruction}<|im_end|>\n<|im_start|>assistant\n"
     
     # Tokenize
     inputs = tokenizer(input_text, return_tensors="pt", padding=True).to(device)
@@ -252,13 +315,14 @@ def generate_response(model, tokenizer, instruction, max_length=256):
     # Decode and extract response
     full_response = tokenizer.decode(outputs[0], skip_special_tokens=True)
     
-    # Extract only the assistant's response (after the last assistant marker)
+    # Extract only the assistant's response
     if "<|im_start|>assistant" in full_response:
         response = full_response.split("<|im_start|>assistant")[-1].strip()
+        response = response.replace("<|im_end|>", "").strip()
     elif "assistant\n" in full_response:
         response = full_response.split("assistant\n")[-1].strip()
     else:
-        # Fallback: try to find response after the instruction
+        # Fallback: try to remove the input text
         response = full_response.replace(input_text, "").strip()
     
     return response
