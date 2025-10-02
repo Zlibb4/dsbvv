@@ -122,10 +122,7 @@ def load_smol_model_and_tokenizer():
     try:
         model = AutoModelForCausalLM.from_pretrained(
             SMOLLM_ID,
-            device_map='auto',
             torch_dtype=torch.bfloat16,
-            use_auth_token=hf_token,
-            low_cpu_mem_usage=True
         )
         tokenizer = AutoTokenizer.from_pretrained(SMOLLM_ID, use_auth_token=hf_token)
         return model, tokenizer
