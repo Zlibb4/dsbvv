@@ -63,7 +63,7 @@ def load_spacy_model():
 @st.cache_resource(show_spinner=False)
 def load_gpt2_model_and_tokenizer():
     try:
-        model = AutoModelForCausalLM.from_pretrained(GPT2_MODEL_ID, dtype=torch.bfloat16)
+        model = AutoModelForCausalLM.from_pretrained(GPT2_MODEL_ID, torch_dtype=torch.bfloat16)
         tokenizer = AutoTokenizer.from_pretrained(GPT2_MODEL_ID)
         return model, tokenizer
     except Exception as e:
