@@ -2,7 +2,8 @@ import streamlit as st
 import torch
 from transformers import (
     GPT2Tokenizer, GPT2LMHeadModel,
-    AutoTokenizer, AutoModelForSequenceClassification
+    AutoTokenizer, AutoModelForSequenceClassification,
+    AutoModelForCausalLM
 )
 import spacy
 import time
