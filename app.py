@@ -66,7 +66,7 @@ def load_gpt2_model_and_tokenizer():
         # Replaced GPT2LMHeadModel and GPT2Tokenizer with Auto versions
         # NOTE: AutoTokenizer is used here and should resolve the issue if transformers is updated.
         tokenizer = AutoTokenizer.from_pretrained(GPT2_MODEL_ID)
-        model = AutoModelForCausalLM.from_pretrained(GPT2_MODEL_ID, trust_remote_code=True)
+        model = AutoModelForCausalLM.from_pretrained(GPT2_MODEL_ID, dtype=torch.bfloat16, trust_remote_code=True)
         
         # Ensure tokenizer has a pad_token if missing, common for causal models
         if tokenizer.pad_token is None:
