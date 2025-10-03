@@ -14,7 +14,7 @@ import random
 # =============================
 
 # Hugging Face model IDs
-SMOLLM_MODEL_ID = "JustToTryModels/fp32"
+SMOLLM_MODEL_ID = "HuggingFaceTB/SmolLM2-135M-Instruct"
 CLASSIFIER_ID = "IamPradeep/Query_Classifier_DistilBERT"
 
 # Random OOD Fallback Responses
