@@ -14,7 +14,7 @@ import random
 # =============================
 
 # Hugging Face model IDs
-SMOLLM_MODEL_ID = "HuggingFaceTB/SmolLM2-135M-Instruct"
+SMOLLM_MODEL_ID = "JustToTryModels/self16"
 CLASSIFIER_ID = "IamPradeep/Query_Classifier_DistilBERT"
 
 # Random OOD Fallback Responses
@@ -75,7 +75,7 @@ def load_smollm_model_and_tokenizer():
         model = AutoModelForCausalLM.from_pretrained(
             SMOLLM_MODEL_ID,
             trust_remote_code=True,
-            low_cpu_mem_usage=True
+            torch_dtype = torch.bfloat16
         )
         
         # Set pad token if not already set
