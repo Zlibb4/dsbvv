@@ -14,7 +14,7 @@ import random
 # =============================
 
 # Hugging Face model IDs
-SMOLLM_MODEL_ID = "JustToTryModels/sssss"  # Your F32 fine-tuned model
+SMOLLM_MODEL_ID = "HuggingFaceTB/SmolLM2-135M-Instruct"
 CLASSIFIER_ID = "IamPradeep/Query_Classifier_DistilBERT"
 
 # Random OOD Fallback Responses
@@ -63,22 +63,18 @@ def load_spacy_model():
 
 @st.cache_resource(show_spinner=False)
 def load_smollm_model_and_tokenizer():
-    """Load SmolLM2 F32 fine-tuned model and tokenizer"""
+    """Load SmolLM2 model and tokenizer with multiple fallback strategies"""
     try:
-        st.info("Loading your fine-tuned SmolLM2 model (F32 format)...")
-        
-        # Load tokenizer
+        # Strategy 1: Try with minimal parameters (most compatible)
+        st.info("Loading SmolLM2 model... (Method 1)")
         tokenizer = AutoTokenizer.from_pretrained(
             SMOLLM_MODEL_ID,
             trust_remote_code=True
         )
         
-        # Load model with explicit F32 dtype (NOT BF16!)
-        # This is crucial for your fine-tuned F32 model
         model = AutoModelForCausalLM.from_pretrained(
             SMOLLM_MODEL_ID,
             trust_remote_code=True,
-            torch_dtype=torch.float32,  # ✅ Explicit F32 for your model
             low_cpu_mem_usage=True
         )
         
@@ -86,15 +82,63 @@ def load_smollm_model_and_tokenizer():
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
         
-        st.success("✅ Fine-tuned model loaded successfully!")
+        st.success("✅ Model loaded successfully!")
         return model, tokenizer
         
-    except Exception as e:
-        st.error(f"Failed to load SmolLM2 model: {str(e)}")
-        st.info("**Debug Info:**")
-        st.info(f"Model ID: {SMOLLM_MODEL_ID}")
-        st.info("Expected format: F32 (float32)")
-        return None, None
+    except Exception as e1:
+        st.warning(f"Method 1 failed: {str(e1)[:100]}...")
+        
+        try:
+            # Strategy 2: Try with explicit torch_dtype=float32
+            st.info("Trying alternative loading method... (Method 2)")
+            tokenizer = AutoTokenizer.from_pretrained(
+                SMOLLM_MODEL_ID,
+                trust_remote_code=True
+            )
+            
+            model = AutoModelForCausalLM.from_pretrained(
+                SMOLLM_MODEL_ID,
+                trust_remote_code=True,
+                torch_dtype=torch.float32,
+                low_cpu_mem_usage=True
+            )
+            
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token
+            
+            st.success("✅ Model loaded successfully!")
+            return model, tokenizer
+            
+        except Exception as e2:
+            st.warning(f"Method 2 failed: {str(e2)[:100]}...")
+            
+            try:
+                # Strategy 3: Try without low_cpu_mem_usage
+                st.info("Trying alternative loading method... (Method 3)")
+                tokenizer = AutoTokenizer.from_pretrained(
+                    SMOLLM_MODEL_ID,
+                    trust_remote_code=True
+                )
+                
+                model = AutoModelForCausalLM.from_pretrained(
+                    SMOLLM_MODEL_ID,
+                    trust_remote_code=True
+                )
+                
+                if tokenizer.pad_token is None:
+                    tokenizer.pad_token = tokenizer.eos_token
+                
+                st.success("✅ Model loaded successfully!")
+                return model, tokenizer
+                
+            except Exception as e3:
+                st.error(f"Failed to load SmolLM2 model. All methods failed.")
+                st.error(f"Error details: {str(e3)}")
+                st.info("**Troubleshooting tips:**")
+                st.info("1. Check if the model 'JustToTryModels/sssss' exists on Hugging Face")
+                st.info("2. Verify you have access to the model (it might be private)")
+                st.info("3. Try upgrading transformers: `pip install --upgrade transformers`")
+                return None, None
 
 @st.cache_resource(show_spinner=False)
 def load_classifier_model():
@@ -248,7 +292,7 @@ def generate_response(model, tokenizer, instruction, max_length=256):
             tokenize=False, 
             add_generation_prompt=True
         )
-    except Exception:
+    except Exception as e:
         # Fallback to simple instruction format
         input_text = f"<|im_start|>user\n{instruction}<|im_end|>\n<|im_start|>assistant\n"
     
