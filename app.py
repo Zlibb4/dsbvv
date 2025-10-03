@@ -74,6 +74,7 @@ def load_smollm_model_and_tokenizer():
         
         model = AutoModelForCausalLM.from_pretrained(
             SMOLLM_MODEL_ID,
+            torch_dtype=torch.float16,
             trust_remote_code=True,
             low_cpu_mem_usage=True
         )
