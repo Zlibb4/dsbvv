@@ -75,7 +75,7 @@ def load_smollm_model_and_tokenizer():
         model = AutoModelForCausalLM.from_pretrained(
             SMOLLM_MODEL_ID,
             trust_remote_code=True,
-            torch_dtype = torch.bfloat16
+            low_cpu_mem_usage=True
         )
         
         # Set pad token if not already set
