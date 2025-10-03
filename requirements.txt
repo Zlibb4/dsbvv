@@ -5,5 +5,3 @@ torch==2.8.0
 spacy==3.7.4
 # This line ensures the correct large spaCy model is installed reliably.
 https://github.com/explosion/spacy-models/releases/download/en_core_web_trf-3.7.3/en_core_web_trf-3.7.3.tar.gz
-sentencepiece
-accelerate
