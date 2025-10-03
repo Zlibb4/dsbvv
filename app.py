@@ -14,7 +14,7 @@ import random
 # =============================
 
 # Hugging Face model IDs
-SMOLLM_MODEL_ID = "HuggingFaceTB/SmolLM2-135M-Instruct"
+SMOLLM_MODEL_ID = "JustToTryModels/new_fp32"
 CLASSIFIER_ID = "IamPradeep/Query_Classifier_DistilBERT"
 
 # Random OOD Fallback Responses
@@ -98,8 +98,8 @@ def load_smollm_model_and_tokenizer():
             
             model = AutoModelForCausalLM.from_pretrained(
                 SMOLLM_MODEL_ID,
-                trust_remote_code=True,
-                torch_dtype=torch.float32,
+                #trust_remote_code=True,
+                #torch_dtype=torch.float32,
                 low_cpu_mem_usage=True
             )
             
