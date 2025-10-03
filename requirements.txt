@@ -1,7 +1,10 @@
+# This file ensures the Streamlit environment is an exact match of the Colab environment.
 streamlit
 transformers==4.56.1
 safetensors==0.6.2
 torch==2.8.0
 spacy==3.7.4
+numpy==2.0.2  # Pinning the exact NumPy version to resolve the binary incompatibility error.
+
 # This line ensures the correct large spaCy model is installed reliably.
 https://github.com/explosion/spacy-models/releases/download/en_core_web_trf-3.7.3/en_core_web_trf-3.7.3.tar.gz
